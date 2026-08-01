@@ -1,6 +1,7 @@
 using System.Text;
 using LegendsViewer.Backend.Analysis;
 using LegendsViewer.Backend.Legends;
+using LegendsViewer.Backend.Legends.Parser;
 using LegendsViewer.Backend.Legends.Various;
 using Microsoft.AspNetCore.Mvc;
 
@@ -240,6 +241,42 @@ public class AnalysisLayerTests
     }
 
     [TestMethod]
+    public void EventSearch_WithoutQueryReturnsWhatTheFilterAdmits()
+    {
+        // "What happened in year N" has no word to search for: the filter is the whole question.
+        int year = _world.Events.First(e => e.Year > 0).Year;
+
+        string result = new EventSearchService().Search(_world, null, EventFilter.Parse(year, year, null), 10);
+
+        int expected = _world.Events.Count(e => e.Year == year);
+        StringAssert.Contains(result, "=== Events ===");
+        StringAssert.Contains(result, $"Matches: {expected} of {_world.Events.Count} events");
+    }
+
+    [TestMethod]
+    public void EventSearch_WithoutQuerySkipsRenderingEntirely()
+    {
+        var target = _world.Events.First();
+
+        string result = new EventSearchService().Search(_world, null, EventFilter.Parse(null, null, target.Type), 5);
+
+        // The "rendered N of M" wording belongs to text search; with no text there is nothing to render.
+        StringAssert.Contains(result, "filtered without rendering");
+        Assert.IsFalse(result.Contains("rendered ", StringComparison.Ordinal), "Reported a render count for a query that renders nothing");
+    }
+
+    [TestMethod]
+    public void EventSearch_RejectsAQueryWithNoQueryAndNoFilter()
+    {
+        var controller = new AnalysisController(_world);
+
+        var result = controller.SearchEvents(null, 10, null, null, null);
+
+        var badRequest = (BadRequestObjectResult)result;
+        StringAssert.Contains((string)badRequest.Value!, "every event in the world");
+    }
+
+    [TestMethod]
     public void Facets_ExposeTheFieldsTheDossierPrints()
     {
         var figure = _world.HistoricalFigures.First(hf => ObjectFacets.For(hf).Count > 0);
@@ -317,6 +354,118 @@ public class AnalysisLayerTests
                 Assert.AreEqual(site.CurrentCiv.Race.NameSingular, facets.First(f => f.Field == "race").Value);
             }
         }
+    }
+
+    /// <summary>
+    /// An entity holding one post named generically and by caste. The test world records no
+    /// positions at all, so the fixture is built rather than found.
+    /// </summary>
+    private LegendsViewer.Backend.Legends.WorldObjects.Entity CrownedEntity()
+    {
+        var entity = new LegendsViewer.Backend.Legends.WorldObjects.Entity([], _world) { Name = "The Test Civ" };
+        entity.EntityPositions.Add(new EntityPosition(
+            [
+                new Property { Name = "id", Value = "1" },
+                new Property { Name = "name", Value = "monarch" },
+                new Property { Name = "name_male", Value = "king" },
+                new Property { Name = "name_female", Value = "queen" },
+            ], _world));
+        return entity;
+    }
+
+    [TestMethod]
+    public void Rankings_ScopeExcludesTypesTheMeasureCannotApplyTo()
+    {
+        var controller = new AnalysisController(_world);
+
+        // "worshippers" only exists on HistoricalFigure, so counting every river and site beside it
+        // would give a denominator no share can be read against.
+        var result = controller.GetTop(null, "worshippers", null, 5);
+        if (result is not OkObjectResult ok)
+        {
+            Assert.Inconclusive("The test world records no worshippers");
+            return;
+        }
+
+        var payload = (RankingDto)ok.Value!;
+        Assert.AreEqual(_world.HistoricalFigures.Count, payload.ObjectsInScope);
+    }
+
+    [TestMethod]
+    public void Facets_TitleCarriesTheBarePostWithoutEntityOrYears()
+    {
+        var figure = new LegendsViewer.Backend.Legends.WorldObjects.HistoricalFigure { Name = "Testfigure", Caste = "Female" };
+        figure.Positions = [new HfPosition(CrownedEntity(), 100, null, 1, "monarch")];
+
+        var titles = ObjectFacets.For(figure).Where(f => f.Field == "title").Select(f => f.Value).ToList();
+
+        // "position" already carries entity and years, which is what makes its base rates useless.
+        CollectionAssert.AreEquivalent(new[] { "Monarch", "Queen" }, titles);
+    }
+
+    [TestMethod]
+    public void Facets_PositionIsIndexedUnderBothSpellingsWhenCasteRenamesIt()
+    {
+        // A post an entity calls "Monarch" is named "King" or "Queen" by every event about it. A
+        // search phrased either way has to find the same figure.
+        var figure = new LegendsViewer.Backend.Legends.WorldObjects.HistoricalFigure { Name = "Testfigure", Caste = "Male" };
+        figure.Positions = [new HfPosition(CrownedEntity(), 100, null, 1, "monarch")];
+
+        var positions = ObjectFacets.For(figure).Where(f => f.Field == "position").Select(f => f.Value).ToList();
+
+        CollectionAssert.AreEquivalent(
+            new[] { "Monarch of The Test Civ (100-?)", "King of The Test Civ (100-?)" },
+            positions);
+    }
+
+    [TestMethod]
+    public void Facets_PositionIsNotDuplicatedWhenCasteKeepsTheName()
+    {
+        var entity = new LegendsViewer.Backend.Legends.WorldObjects.Entity([], _world) { Name = "The Test Civ" };
+        entity.EntityPositions.Add(new EntityPosition(
+            [new Property { Name = "id", Value = "1" }, new Property { Name = "name", Value = "mayor" }], _world));
+
+        var figure = new LegendsViewer.Backend.Legends.WorldObjects.HistoricalFigure { Name = "Testfigure", Caste = "Male" };
+        figure.Positions = [new HfPosition(entity, 100, null, 1, "mayor")];
+
+        var facets = ObjectFacets.For(figure);
+
+        Assert.AreEqual(1, facets.Count(f => f.Field == "position"));
+        Assert.AreEqual(1, facets.Count(f => f.Field == "title"));
+    }
+
+    [TestMethod]
+    public void Facets_EntityNamesWhoHoldsItsOffices()
+    {
+        var entity = CrownedEntity();
+        var holder = _world.HistoricalFigures[0];
+        entity.EntityPositionAssignments.Add(new EntityPositionAssignment(
+            [
+                new Property { Name = "id", Value = "1" },
+                new Property { Name = "position_id", Value = "1" },
+                new Property { Name = "histfig", Value = holder.Id.ToString() },
+            ], _world));
+
+        var leaders = ObjectFacets.For(entity).Where(f => f.Field == "leader").ToList();
+
+        Assert.AreEqual(1, leaders.Count);
+        Assert.AreEqual($"Monarch: {holder.Name}", leaders[0].Value);
+    }
+
+    [TestMethod]
+    public void Facets_SitePopulationIsBothReadableAndRankable()
+    {
+        // Populations come from -world_sites_and_pops.txt, which many exports omit — the real world
+        // in df-install has none. The facet is built here rather than found, so that the shape is
+        // still covered when the file is missing.
+        var site = new LegendsViewer.Backend.Legends.WorldObjects.Site([], _world) { Name = "Testsite" };
+        site.Populations.Add(new Population(null, new CreatureInfo("dwarf"), 120));
+        site.Populations.Add(new Population(null, new CreatureInfo("human"), 30));
+
+        var facets = ObjectFacets.For(site);
+
+        Assert.AreEqual(2, facets.Count(f => f.Field == "population"));
+        Assert.AreEqual("150", facets.First(f => f.Field == "populationtotal").Value);
     }
 
     [TestMethod]

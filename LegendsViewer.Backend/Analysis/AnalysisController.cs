@@ -274,7 +274,7 @@ public class AnalysisController(IWorld world) : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public ActionResult SearchEvents(
-        [FromQuery] string q,
+        [FromQuery] string? q = null,
         [FromQuery] int limit = EventSearchService.DefaultLimit,
         [FromQuery] int? fromYear = null,
         [FromQuery] int? toYear = null,
@@ -285,15 +285,16 @@ public class AnalysisController(IWorld world) : ControllerBase
             return problem;
         }
 
-        if (string.IsNullOrWhiteSpace(q))
-        {
-            return BadRequest("Query 'q' must not be empty.");
-        }
-
         limit = Math.Clamp(limit, 1, MaxSearchLimit);
         var filter = EventFilter.Parse(fromYear, toYear, eventTypes);
 
-        return Text(new EventSearchService().Search(_world, q.Trim(), filter, limit));
+        // 'q' alone, or a filter alone, both narrow the world. Neither would mean rendering all of it.
+        if (string.IsNullOrWhiteSpace(q) && filter.IsEmpty)
+        {
+            return BadRequest("Give 'q', or at least one of 'fromYear', 'toYear' and 'eventTypes'. Without either this would return every event in the world.");
+        }
+
+        return Text(new EventSearchService().Search(_world, q?.Trim(), filter, limit));
     }
 
     /// <summary>History of one world object as plain prose, in a single response.</summary>

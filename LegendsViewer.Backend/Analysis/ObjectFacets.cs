@@ -51,10 +51,30 @@ public static class ObjectFacets
                 }
                 if (hf.Positions != null)
                 {
+                    var titles = new List<string>();
                     foreach (var position in hf.Positions.OrderBy(p => p.StartYear ?? -1))
                     {
-                        Add(facets, "position", "Positions",
-                            $"{position.Title} of {position.Entity?.Name ?? "unknown"} ({position.StartYear?.ToString() ?? "?"}-{position.EndYear?.ToString() ?? "?"})");
+                        string entityName = position.Entity?.Name ?? "unknown";
+                        string years = $"({position.StartYear?.ToString() ?? "?"}-{position.EndYear?.ToString() ?? "?"})";
+                        Add(facets, "position", "Positions", $"{position.Title} of {entityName} {years}");
+
+                        // An entity records a post generically ("Monarch") while every event names it
+                        // by caste ("King", "Queen"). Both spellings are indexed, so a search phrased
+                        // the way the prose reads finds the figure the properties know about.
+                        string casteTitle = CasteTitleOf(position, hf.Caste);
+                        if (!string.Equals(casteTitle, position.Title, StringComparison.OrdinalIgnoreCase))
+                        {
+                            Add(facets, "position", "Positions", $"{casteTitle} of {entityName} {years}");
+                        }
+
+                        // The bare post, without entity or years: "position" carries all three and so
+                        // is nearly unique per figure, which makes its base rates meaningless.
+                        AddDistinct(titles, position.Title);
+                        AddDistinct(titles, casteTitle);
+                    }
+                    foreach (string title in titles)
+                    {
+                        Add(facets, "title", "Position titles", title);
                     }
                 }
                 break;
@@ -71,6 +91,17 @@ public static class ObjectFacets
                     // One entry per religion, not per believer: see "worshippers" on HistoricalFigure.
                     Add(facets, "deity", "Deity this entity is devoted to", deity.Name);
                 }
+                // The other half of "position" on HistoricalFigure. Without it an entity cannot say
+                // who runs it, and the only route is a substring search for its own name.
+                foreach (var assignment in entity.EntityPositionAssignments)
+                {
+                    if (assignment.HistoricalFigure == null)
+                    {
+                        continue;
+                    }
+                    string title = entity.EntityPositions.Find(p => p.Id == assignment.PositionId)?.Name ?? "Officer";
+                    Add(facets, "leader", "Office holders", $"{title}: {assignment.HistoricalFigure.Name}");
+                }
                 break;
 
             case Site site:
@@ -85,10 +116,19 @@ public static class ObjectFacets
                 // Only worth printing when the site changed hands: equal to the owner it says nothing.
                 var founder = site.OwnerHistory.FirstOrDefault()?.Owner;
                 Add(facets, "founder", "Founded by", founder != null && founder != site.CurrentOwner ? founder.Name : null);
+                Add(facets, "region", "Region", site.Region?.Name);
                 Add(facets, "coordinates", "Coordinates", site.Coordinates.Count > 0
                     ? string.Join(" ", site.Coordinates.Select(location => $"{location.X},{location.Y}"))
                     : null);
                 Add(facets, "structures", "Structures", site.Structures.Count > 0 ? site.Structures.Count.ToString() : null);
+                // Event count measures how well a site is documented, not how big it is. The head
+                // count is the only size there is, and being numeric it becomes a /top measure.
+                foreach (var population in site.Populations.Where(p => p.Count > 0))
+                {
+                    Add(facets, "population", "Population", $"{population.Count} {population.Race.NamePlural}");
+                }
+                int inhabitants = site.Populations.Sum(p => p.Count);
+                Add(facets, "populationtotal", "Total population", inhabitants > 0 ? inhabitants.ToString() : null);
                 foreach (var connection in site.Connections)
                 {
                     Add(facets, "connection", "Connections", connection.Name);
@@ -118,5 +158,23 @@ public static class ObjectFacets
         {
             facets.Add(new Facet(field, label, PlainText.Strip(value)));
         }
+    }
+
+    private static void AddDistinct(List<string> values, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value) && !values.Contains(value, StringComparer.OrdinalIgnoreCase))
+        {
+            values.Add(value);
+        }
+    }
+
+    /// <summary>The post as the prose spells it, falling back to the generic name when the entity
+    /// records no caste variant.</summary>
+    private static string CasteTitleOf(HfPosition position, string? caste)
+    {
+        var entityPosition = position.Entity?.EntityPositions
+            .Find(p => string.Equals(p.Name, position.Title, StringComparison.OrdinalIgnoreCase));
+
+        return entityPosition?.GetTitleByCaste(caste ?? string.Empty) ?? position.Title;
     }
 }

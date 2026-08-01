@@ -24,21 +24,31 @@ public static class RankingService
         int limit)
     {
         var measured = new List<(WorldObject Object, string Type, double Value)>();
-        int objectsInScope = 0;
         string label = by;
+
+        // Counted per type so the denominator can drop the types the measure never applies to.
+        // "30 of 89,732 objects" mixes deities with rivers and answers nothing; the population a
+        // reader needs is the one the measure could have been recorded on.
+        var totalsByType = new Dictionary<string, int>();
+        var typesWithMeasure = new HashSet<string>();
 
         foreach (var (typeName, items) in scope)
         {
             foreach (WorldObject item in items)
             {
-                objectsInScope++;
+                totalsByType[typeName] = totalsByType.GetValueOrDefault(typeName) + 1;
 
                 if (TryMeasure(item, by, ref label, out double value))
                 {
                     measured.Add((item, typeName, value));
+                    typesWithMeasure.Add(typeName);
                 }
             }
         }
+
+        int objectsInScope = totalsByType
+            .Where(entry => typesWithMeasure.Contains(entry.Key))
+            .Sum(entry => entry.Value);
 
         if (measured.Count == 0)
         {
