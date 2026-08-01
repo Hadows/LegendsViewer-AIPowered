@@ -165,6 +165,13 @@ affiliations, worshipped deities, and so on.
 Each hit reports **which** field and value matched, so a result is self-explaining. An object is
 counted once even when several of its values match.
 
+This is the route for questions about ownership, which no event answers. Sites carry `owner`, `civ`
+and `race` for whoever holds them now, plus `founder` when that differs:
+
+```bash
+curl -s "http://localhost:15421/api/Analysis/objects/search?q=Dwarf&type=Site&field=race"
+```
+
 ### `GET /events/search` — by event text
 
 Full text search over the rendered prose of every event.

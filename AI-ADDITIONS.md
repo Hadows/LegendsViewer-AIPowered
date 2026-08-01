@@ -81,6 +81,21 @@ what they can query back. Numeric facets are additionally picked up by `/top` as
 Adding a property there makes it readable, searchable and rankable at once — do not add properties
 to `ObjectHeader`, which only groups them for display.
 
+A facet value must be built from the data, never from an object that has no `ToString` override:
+the result reads like a value but is the class name, and nothing downstream can tell the difference.
+`Facets_NeverPrintATypeNameInsteadOfAValue` asserts it for every site and entity in the test world.
+
+### Ownership belongs on the object, not in its events
+
+Who holds a site is the first thing asked of it, and it appears in no event text: the founding event
+names the *group* that founded it, and a site that changed hands never mentions its current owner in
+prose at all. `Site` therefore carries `owner` (the holding group), `civ` (that group's civilization,
+resolved by walking up its parents) and `race`, which is what makes "the dwarven sites" a single
+property query — 101 of 822 on the real world — instead of a guess from `sitetype` confirmed dossier
+by dossier. `founder` is printed only when it differs from the current owner, so its presence is
+itself the signal that the site was taken: Praisearmors reads `founder: The Tomb of Gangs` (dwarven)
+against `civ: The Busy Confederacies` (human).
+
 ### Prose must never carry markup
 
 `Print(link: false)` already avoids the anchors, and `PlainText.Strip()` is the safety net for any
