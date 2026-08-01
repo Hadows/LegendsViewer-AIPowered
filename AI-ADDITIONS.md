@@ -85,6 +85,19 @@ A facet value must be built from the data, never from an object that has no `ToS
 the result reads like a value but is the class name, and nothing downstream can tell the difference.
 `Facets_NeverPrintATypeNameInsteadOfAValue` asserts it for every site and entity in the test world.
 
+A facet that carries several things at once cannot be aggregated. `position` reads
+`Monarch of The Stoked Boots (286-?)`, which makes it 8,932 distinct values over 9,785 occurrences —
+`/facets` on it says nothing. `title` therefore carries the bare post, and drops to 652 values that
+rank as they should. Keep the composite for reading and searching, and add a bare one for counting.
+
+### The same office has two names
+
+An entity records a post generically (`Monarch`); every event about it uses the caste-specific title
+(`King`, `Queen`), and `EntityPosition.GetTitleByCaste` is what maps between them. A reader who saw
+the prose searches for the second and a reader who saw the properties searches for the first, so
+`position` is indexed under **both** spellings when they differ. That is also why `leader` exists on
+`Entity`: `position` answers "what did this figure hold" and nothing answered "who holds this".
+
 ### Ownership belongs on the object, not in its events
 
 Who holds a site is the first thing asked of it, and it appears in no event text: the founding event

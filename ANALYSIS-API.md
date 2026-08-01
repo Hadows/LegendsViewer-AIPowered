@@ -166,7 +166,10 @@ Each hit reports **which** field and value matched, so a result is self-explaini
 counted once even when several of its values match.
 
 This is the route for questions about ownership, which no event answers. Sites carry `owner`, `civ`
-and `race` for whoever holds them now, plus `founder` when that differs:
+and `race` for whoever holds them now, plus `founder` when that differs, `region` for where they sit,
+and `population`/`populationtotal` — the latter being the only measure of a site's *size*, since an
+event count measures how well it was documented. Populations come from `-world_sites_and_pops.txt`,
+so they are absent from exports that ship only the two XML files. Entities carry `leader`:
 
 ```bash
 curl -s "http://localhost:15421/api/Analysis/objects/search?q=Dwarf&type=Site&field=race"
@@ -178,11 +181,16 @@ Full text search over the rendered prose of every event.
 
 | Parameter | Default | Notes |
 |---|---|---|
-| `q` | required | substring, case-insensitive |
+| `q` | — | substring, case-insensitive; optional when a filter is given |
 | `limit` | 25 | maximum 200 |
 | `fromYear`, `toYear`, `eventTypes` | — | shared filters |
 
 Returns text: a header with the match count and the time spent, then the matching event lines.
+
+`q` and the filters both narrow the world, so either alone is enough; only asking for **neither** is
+a **400**, since that would return every event there is. Omitting `q` is how a year is read —
+`?fromYear=290&toYear=290` — and it is the cheap direction: with no text to match the prose is never
+rendered, so the query costs a comparison per event rather than a full render.
 
 There is no index — the text only exists once the prose has been rendered, so each query renders the
 events it examines. On a 494,436 event world an unfiltered query takes about 3.8 s; adding
@@ -242,6 +250,10 @@ objects share a value, this one orders by the value itself.
 Measures are the two intrinsic counts (`events`, `eventcollections`) plus every facet whose value
 parses as a number. Adding a numeric property to `ObjectFacets` therefore makes it rankable without
 touching this route. A non-numeric field answers **400**.
+
+`objectsInScope` counts only the types the measure applies to. Ranking `worshippers` across all
+types reports 41,080 — the historical figures — not the 89,732 objects of every kind, because a
+denominator that mixes deities with rivers cannot be read against.
 
 ```json
 {
