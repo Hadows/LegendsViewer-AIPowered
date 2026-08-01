@@ -1,0 +1,282 @@
+# Analysis API
+
+Read-only API added by this fork, under `/api/Analysis` on the backend port (`15421`). It exposes
+the parsed world as plain prose and as aggregates, for consumers that are not the Vue frontend.
+
+For why it exists and how it is built, see [AI-ADDITIONS.md](AI-ADDITIONS.md).
+
+## Before anything else: load a world
+
+The analysis routes read the in-memory world; they never load one. Use the existing endpoint:
+
+```bash
+curl -X POST http://localhost:15421/api/Bookmark/loadByFullPath \
+     -H "Content-Type: application/json" \
+     -d '"C:\\path\\to\\region1-00300-01-01-legends.xml"'
+```
+
+This costs roughly 30 s and 800 MB for a large export, once per process. Until it completes, every
+analysis route answers **409 Conflict** with an explanatory message rather than an empty result.
+
+## Conventions
+
+**Two response formats.** Everything meant to be *read* is `text/plain`: summary, dossier, digest,
+event search. Everything meant to be *processed* is JSON: type lists, name and property search,
+facets, rankings.
+
+**Output is input.** Answers quote the vocabulary of the next query. Event lines are
+`date [raw type] prose` and that raw type is a valid `eventTypes=` value; fact lines are
+`Label [key]: value` and that key is a valid `field=` value.
+
+**Discovery routes.** `/types`, `/eventtypes`, `/facets` without `field` and `/top` without `by`
+each list what the corresponding parameter accepts. An unknown value answers **400** and points at
+the matching discovery route.
+
+**Type names** ignore case and separators: `HistoricalFigure`, `historicalfigure` and
+`historical_figure` are the same. Where `type` is optional, omitting it searches every type.
+
+**Shared event filters**, accepted by `dossier`, `digest` and `events/search`:
+
+| Parameter | Meaning |
+|---|---|
+| `fromYear` | earliest year, inclusive |
+| `toYear` | latest year, inclusive |
+| `eventTypes` | comma separated raw event type names |
+
+---
+
+## Discovery
+
+### `GET /types`
+
+World object types accepted by the other routes, with their counts.
+
+```json
+[{ "type": "HistoricalFigure", "count": 41080 }, { "type": "Site", "count": 822 }]
+```
+
+### `GET /eventtypes`
+
+Event type names accepted by `eventTypes=`, with world-wide counts, most frequent first.
+
+---
+
+## Reading
+
+### `GET /summary`
+
+Overview of the loaded world as text: totals per type, main civilizations, eras, largest wars, most
+eventful figures, most common event types. About 4 KB on a large world — the intended starting point.
+
+Note: it derives the last year from the events rather than from `IWorld.CurrentYear`, which is
+unreliable, and reports the discrepancy when the two disagree.
+
+### `GET /dossier/{type}/{id}`
+
+The full history of one object as prose, in a single response: identity, facts, event collections,
+then every event.
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `maxEvents` | 1000 | `0` means no limit |
+| `fromYear`, `toYear`, `eventTypes` | — | shared filters |
+
+```bash
+curl "http://localhost:15421/api/Analysis/dossier/HistoricalFigure/24707?maxEvents=0"
+```
+
+```
+=== Corud Boottowns ===
+Type: HistoricalFigure (id 24707)
+Classification: Human
+
+-- Facts --
+Race [race]: Human
+Goal [goal]: Bathe World In Chaos
+Positions [position]: Sacred Dust of The Dead Coven (236-?); Monarch of The Stoked Boots (283-?)
+
+-- Events (34) --
+0283-10-22  [entity overthrown]  In 283, early winter, (22nd of Moonstone) Corud toppled …
+```
+
+Answers **404** for an unknown id, **400** for an unknown type.
+
+### `GET /digest/{type}/{id}`
+
+Condensed alternative for objects whose dossier is too large to read: event type breakdown, event
+collections grouped by kind, an activity histogram over time, and only the *notable* events.
+
+Notable is defined by rarity rather than by a hand-written list of interesting types: an event
+qualifies when its type occurs at most `max(3, 1% of the object's events)` times for that object. An
+object's routine — festivals, job changes, membership churn — sinks by itself, and the events that
+happened once surface.
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `maxNotableEvents` | 80 | `0` means no limit |
+| `fromYear`, `toYear`, `eventTypes` | — | shared filters |
+
+On the most documented civilization of the test world this returns 17 KB where the dossier returns
+655 KB.
+
+---
+
+## Searching
+
+The three searches cover three different surfaces and are not interchangeable. A goal or an
+affiliation appears in no event, so only the property search finds it; a deed appears in no property,
+so only the event search finds it.
+
+### `GET /search` — by name
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `q` | required | substring, case-insensitive |
+| `type` | all types | restrict to one type |
+| `limit` | 25 | maximum 200 |
+
+Ranks exact matches first, then prefix matches, then by event count.
+
+```json
+{
+  "query": "Stoked Boots",
+  "totalMatches": 13,
+  "returned": 1,
+  "results": [{
+    "type": "Entity", "id": 88, "name": "The Stoked Boots",
+    "detail": "Civilization", "eventCount": 3575,
+    "dossier": "/api/Analysis/dossier/Entity/88"
+  }]
+}
+```
+
+### `GET /objects/search` — by property
+
+Searches the structured properties shown in a dossier's "Facts" block: goal, race, positions,
+affiliations, worshipped deities, and so on.
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `q` | required | substring, case-insensitive |
+| `type` | all types | restrict to one type |
+| `field` | all fields | the key printed in brackets, e.g. `goal` |
+| `limit` | 25 | maximum 200 |
+
+Each hit reports **which** field and value matched, so a result is self-explaining. An object is
+counted once even when several of its values match.
+
+### `GET /events/search` — by event text
+
+Full text search over the rendered prose of every event.
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `q` | required | substring, case-insensitive |
+| `limit` | 25 | maximum 200 |
+| `fromYear`, `toYear`, `eventTypes` | — | shared filters |
+
+Returns text: a header with the match count and the time spent, then the matching event lines.
+
+There is no index — the text only exists once the prose has been rendered, so each query renders the
+events it examines. On a 494,436 event world an unfiltered query takes about 3.8 s; adding
+`eventTypes=` brings it to about 40 ms, because excluded events are never rendered. Narrow first
+when you can.
+
+---
+
+## Aggregating
+
+### `GET /facets` — how common is a value
+
+Base rates for object properties.
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `type` | all types | restrict to one type |
+| `field` | — | omit to list the queryable fields |
+| `limit` | 50 | maximum 1000 |
+
+Without `field`, returns the fields available in the scope with `objects`, `occurrences`,
+`distinctValues` and `valuesPerObject` — the last one making multi-valued fields visible at a glance.
+
+With `field`, returns the value distribution:
+
+```json
+{
+  "field": "goal", "label": "Goal",
+  "objectsInScope": 41080,
+  "objectsWithField": 17741,
+  "distinctValues": 13,
+  "values": [
+    { "rank": 1, "value": "Attain Rank In Society", "objects": 3808, "occurrences": 3808, "share": 0.2146 }
+  ]
+}
+```
+
+`share` divides by `objectsWithField`, not by `objectsInScope`: most properties are recorded for only
+part of the objects, and dividing by the whole scope understates every value. Both denominators are
+returned so the choice is visible rather than assumed.
+
+`objects` counts distinct objects, `occurrences` counts raw entries. They are equal for
+single-valued fields and diverge for multi-valued ones such as `position` or `sphere`.
+
+### `GET /top` — who holds the maximum
+
+Rankings by a numeric measure. This is the complement of `/facets`: that one orders by how many
+objects share a value, this one orders by the value itself.
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `type` | all types | restrict to one type |
+| `by` | — | omit to list the available measures |
+| `order` | `desc` | `asc` for minima |
+| `limit` | 20 | maximum 200 |
+
+Measures are the two intrinsic counts (`events`, `eventcollections`) plus every facet whose value
+parses as a number. Adding a numeric property to `ObjectFacets` therefore makes it rankable without
+touching this route. A non-numeric field answers **400**.
+
+```json
+{
+  "by": "worshippers", "label": "Worshipped by (figures)", "order": "desc",
+  "objectsInScope": 41080, "objectsWithMeasure": 30,
+  "total": 140853, "min": 1335, "median": 4392, "max": 13346,
+  "results": [
+    { "rank": 1, "type": "HistoricalFigure", "id": 116, "name": "The Confident Yells", "value": 13346 }
+  ]
+}
+```
+
+The distribution travels with the leaders on purpose: a first place is not interpretable without the
+spread. Here the top deity holds three times the median — a genuine lead, not a monopoly.
+
+---
+
+## A worked sequence
+
+```bash
+# 1. where am I
+curl -s "http://localhost:15421/api/Analysis/summary"
+
+# 2. did this kind of thing ever happen
+curl -s "http://localhost:15421/api/Analysis/events/search?q=toppled+the+government"
+
+# 3. who was involved
+curl -s "http://localhost:15421/api/Analysis/digest/HistoricalFigure/24707"
+
+# 4. is the trait that stands out actually rare
+curl -s "http://localhost:15421/api/Analysis/facets?type=HistoricalFigure&field=goal&limit=10"
+curl -s "http://localhost:15421/api/Analysis/top?type=HistoricalFigure&by=worshippers&limit=10"
+```
+
+Step 4 is the one worth insisting on. Steps 2 and 3 surface something striking; only the base rate
+and the ranking tell you whether it is striking or merely common.
+
+## Status codes
+
+| Code | When |
+|---|---|
+| 200 | success |
+| 400 | empty `q`, or unknown `type`, `field` or `by` — the message names the discovery route |
+| 404 | unknown id on `dossier` or `digest` |
+| 409 | no world loaded |
