@@ -1,6 +1,7 @@
 using System.Text;
 using LegendsViewer.Backend.Analysis;
 using LegendsViewer.Backend.Legends;
+using LegendsViewer.Backend.Legends.Various;
 using Microsoft.AspNetCore.Mvc;
 
 namespace LegendsViewer.Backend.Tests.Analysis;
@@ -257,11 +258,83 @@ public class AnalysisLayerTests
     [TestMethod]
     public void Facets_NeverContainMarkup()
     {
-        foreach (var item in _world.HistoricalFigures.Take(50).Cast<LegendsViewer.Backend.Legends.WorldObject>().Concat(_world.Entities))
+        foreach (var item in _world.HistoricalFigures.Take(50).Cast<LegendsViewer.Backend.Legends.WorldObject>().Concat(_world.Entities).Concat(_world.Sites))
         {
             foreach (var facet in ObjectFacets.For(item))
             {
                 Assert.IsFalse(facet.Value.Contains('<'), $"Facet {facet.Field} of {item.Name} contains markup");
+            }
+        }
+    }
+
+    [TestMethod]
+    public void Facets_NeverPrintATypeNameInsteadOfAValue()
+    {
+        // A facet built from an object without a ToString override renders its namespace instead of
+        // its data, which reads as a value and is silently useless. Nothing may carry the assembly name.
+        foreach (var item in _world.Sites.Cast<LegendsViewer.Backend.Legends.WorldObject>().Concat(_world.Entities))
+        {
+            foreach (var facet in ObjectFacets.For(item))
+            {
+                Assert.IsFalse(facet.Value.Contains("LegendsViewer.Backend"),
+                    $"Facet {facet.Field} of {item.Name} prints a type name: {facet.Value}");
+            }
+        }
+    }
+
+    [TestMethod]
+    public void Facets_SiteCoordinatesArePoints()
+    {
+        var site = _world.Sites.FirstOrDefault(s => ObjectFacets.For(s).Any(f => f.Field == "coordinates"));
+        Assert.IsNotNull(site, "The test world has no site with coordinates");
+
+        string value = ObjectFacets.For(site).First(f => f.Field == "coordinates").Value;
+
+        foreach (string point in value.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] parts = point.Split(',');
+            Assert.AreEqual(2, parts.Length, $"Coordinate '{point}' is not a pair");
+            Assert.IsTrue(int.TryParse(parts[0], out _) && int.TryParse(parts[1], out _), $"Coordinate '{point}' is not numeric");
+        }
+    }
+
+    [TestMethod]
+    public void Facets_SiteExposesTheCivilizationThatHoldsIt()
+    {
+        // "Which sites belong to the dwarves" must be one property query. Without these the only
+        // route is guessing from the site type and confirming each hit against its founding event.
+        var owned = _world.Sites.Where(s => s.CurrentCiv != null).ToList();
+        Assert.IsTrue(owned.Count > 0, "The test world has no site with a current civilization");
+
+        foreach (var site in owned)
+        {
+            var facets = ObjectFacets.For(site);
+            Assert.AreEqual(site.CurrentCiv!.Name, facets.First(f => f.Field == "civ").Value);
+
+            // Race is dropped rather than printed as "Unknown", so it is only asserted when known.
+            if (site.CurrentCiv.Race != CreatureInfo.Unknown)
+            {
+                Assert.AreEqual(site.CurrentCiv.Race.NameSingular, facets.First(f => f.Field == "race").Value);
+            }
+        }
+    }
+
+    [TestMethod]
+    public void Facets_SiteFounderOnlyAppearsWhenItDiffersFromTheOwner()
+    {
+        foreach (var site in _world.Sites)
+        {
+            var founder = site.OwnerHistory.FirstOrDefault()?.Owner;
+            var facets = ObjectFacets.For(site);
+
+            if (founder != null && founder != site.CurrentOwner)
+            {
+                Assert.AreEqual(founder.Name, facets.First(f => f.Field == "founder").Value);
+            }
+            else
+            {
+                Assert.IsFalse(facets.Any(f => f.Field == "founder"),
+                    $"{site.Name} repeats its owner as the founder");
             }
         }
     }

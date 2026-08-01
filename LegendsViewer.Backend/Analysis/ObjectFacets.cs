@@ -1,5 +1,6 @@
 using LegendsViewer.Backend.Legends;
 using LegendsViewer.Backend.Legends.EventCollections;
+using LegendsViewer.Backend.Legends.Various;
 using LegendsViewer.Backend.Legends.WorldObjects;
 
 namespace LegendsViewer.Backend.Analysis;
@@ -74,7 +75,19 @@ public static class ObjectFacets
 
             case Site site:
                 Add(facets, "sitetype", "Site type", site.SiteType.ToString());
-                Add(facets, "coordinates", "Coordinates", site.Coordinates.Count > 0 ? string.Join(" ", site.Coordinates) : null);
+                // Who holds the site now. CurrentOwner is usually a site level group, so the civ is
+                // resolved by walking up its parents; the civ's race is what turns "the dwarven
+                // sites" into one property query instead of a guess from the site type.
+                Add(facets, "owner", "Owner", site.CurrentOwner?.Name);
+                Add(facets, "civ", "Civilization", site.CurrentCiv?.Name);
+                var race = site.CurrentCiv?.Race;
+                Add(facets, "race", "Race", race != null && race != CreatureInfo.Unknown ? race.NameSingular : null);
+                // Only worth printing when the site changed hands: equal to the owner it says nothing.
+                var founder = site.OwnerHistory.FirstOrDefault()?.Owner;
+                Add(facets, "founder", "Founded by", founder != null && founder != site.CurrentOwner ? founder.Name : null);
+                Add(facets, "coordinates", "Coordinates", site.Coordinates.Count > 0
+                    ? string.Join(" ", site.Coordinates.Select(location => $"{location.X},{location.Y}"))
+                    : null);
                 Add(facets, "structures", "Structures", site.Structures.Count > 0 ? site.Structures.Count.ToString() : null);
                 foreach (var connection in site.Connections)
                 {
