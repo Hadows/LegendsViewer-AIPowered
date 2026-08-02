@@ -1,0 +1,55 @@
+name: Release
+
+# The publish-* workflows stop at upload-artifact, which expires after 90 days and needs a login to
+# download. This one runs the same build and attaches the result to a real release instead.
+# macOS is deliberately left out: those targets are signed and notarised with Apple credentials.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      matrix:
+        rid: [win-x64, linux-x64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+
+      - name: Setup .NET Core
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore LegendsViewer.sln
+
+      - name: Build Backend and Frontend (Vue 3)
+        run: dotnet build LegendsViewer.sln --configuration Release --no-restore
+
+      - name: Publish Backend
+        run: dotnet publish LegendsViewer.Backend/LegendsViewer.Backend.csproj -c Release -r ${{ matrix.rid }} --self-contained true -p:PublishSingleFile=true -p:DebugType=none -o ./publish
+
+      - name: Publish Frontend
+        run: dotnet publish LegendsViewer.Frontend/LegendsViewer.Frontend.csproj -c Release -p:DebugType=none -o ./publish
+
+      - name: Create ZIP Archive
+        run: cd publish && zip -r ../LegendsViewer-${{ github.ref_name }}-${{ matrix.rid }}.zip .
+
+      # Both matrix jobs write to the same release: the first creates it, the second adds its zip.
+      # Draft, so a tag pushed by mistake publishes nothing until the release is reviewed by hand.
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: LegendsViewer-*.zip
+          draft: true
+          generate_release_notes: true
