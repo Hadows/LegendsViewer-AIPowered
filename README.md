@@ -1,4 +1,5 @@
 [![Build and Test](https://github.com/Hadows/LegendsViewer-AIPowered/actions/workflows/build-and-test.yml/badge.svg)](https://github.com/Hadows/LegendsViewer-AIPowered/actions/workflows/build-and-test.yml)
+[![Release](https://img.shields.io/github/v/release/Hadows/LegendsViewer-AIPowered?include_prereleases)](https://github.com/Hadows/LegendsViewer-AIPowered/releases/latest)
 
 # LegendsViewer-AIPowered
 
@@ -19,6 +20,8 @@ Upstream is built for a person browsing a world in a web UI. This fork adds a se
 - responses in plain prose instead of Vuetify markup
 - whole histories in one response instead of pages of ten
 - search over names, over event text, and over object properties
+- ownership and offices as queryable properties, which no event text contains
+- reading a span of history by year, not only searching it for a word
 - base rates and rankings, so a finding can be judged as common or rare
 
 Everything is additive: the parsing and the object graph are upstream's, unchanged.
@@ -27,6 +30,9 @@ Everything is additive: the parsing and the object graph are upstream's, unchang
 |---|---|
 | [AI-ADDITIONS.md](AI-ADDITIONS.md) | what this fork adds, the design constraints, and the conventions to follow |
 | [ANALYSIS-API.md](ANALYSIS-API.md) | reference for the `/api/Analysis` endpoints |
+
+An [MCP server](https://github.com/Hadows/legendsviewer-mcp) exposing these endpoints to language
+models is maintained in a separate repository.
 
 ### Relationship to upstream
 
@@ -54,6 +60,23 @@ git merge upstream/main
   [ANALYSIS-API.md](ANALYSIS-API.md)
 
 ![Worlds Overview - Bookmarks](https://i.imgur.com/8AYxP4v.png "Worlds Overview - Bookmarks")
+
+## Download
+
+Self-contained builds — no .NET runtime needed. Get them from the
+[latest release](https://github.com/Hadows/LegendsViewer-AIPowered/releases/latest):
+
+| File | Platform |
+|---|---|
+| `LegendsViewer-<version>-win-x64.zip` | Windows x64 |
+| `LegendsViewer-<version>-linux-x64.zip` | Linux x64 |
+
+Unzip and run `LegendsViewer`. The interface opens at `http://localhost:15422`, with the API on
+`15421`.
+
+macOS builds are not published here: those targets are signed and notarised with Apple credentials
+this fork does not have. Use the
+[upstream releases](https://github.com/Kromtec/LegendsViewer-Next/releases) for macOS.
 
 ## Installation for Development
 
