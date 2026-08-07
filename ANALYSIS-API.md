@@ -282,13 +282,22 @@ to avoid.
 | `type` | all types | restrict to one type |
 | `field` | — | **required**, the facet to group by; any key `/facets` lists |
 | `measure` | none | numeric measure to aggregate; any name `/top` accepts |
+| `where` | none | `field:value`, restricting the population before grouping |
 | `limit` | 50 | maximum 1000 groups |
 
 Without `measure` the groups carry object counts only. With it, each group also reports `total`,
 `min`, `max`, `median` and `mean`, and the groups are ordered by `total` instead of by size.
 
+**`where` is not a convenience.** Caste names are chosen per creature and every race reuses the
+obvious ones, so `field=caste` on the whole world puts dwarves, humans and elves in the same `Male`
+group and the result reads like a fact about one population when it describes four. The value is
+matched whole and case insensitively — a substring match would let `race:Elf` also take the dark
+elves, which is the confusion the restriction exists to prevent. A `where` missing either half
+answers **400** rather than being dropped, since a silently ignored restriction answers a wider
+question than the one asked.
+
 ```bash
-curl -s "http://localhost:15421/api/Analysis/crosstab?type=HistoricalFigure&field=caste&measure=ageatdeath"
+curl -s "http://localhost:15421/api/Analysis/crosstab?type=HistoricalFigure&field=caste&measure=ageatdeath&where=race:Orc"
 curl -s "http://localhost:15421/api/Analysis/crosstab?type=War&field=attackerrace&measure=deathcount"
 ```
 
@@ -296,11 +305,12 @@ curl -s "http://localhost:15421/api/Analysis/crosstab?type=War&field=attackerrac
 {
   "field": "caste", "fieldLabel": "Caste",
   "measure": "ageatdeath", "measureLabel": "Age at death",
-  "objectsInScope": 41080, "objectsWithField": 41080, "objectsWithMeasure": 28114,
+  "where": "race:Orc",
+  "objectsInScope": 51696, "objectsWithField": 51691, "objectsWithMeasure": 37056,
   "groups": 3,
   "results": [
-    { "rank": 1, "value": "GOBLIN", "objects": 22417, "objectsWithMeasure": 15003,
-      "total": 570114, "min": 0, "max": 50, "median": 38, "mean": 38.0 }
+    { "rank": 1, "value": "Male", "objects": 21920, "objectsWithMeasure": 15146,
+      "total": 751624, "min": 0, "max": 383, "median": 36, "mean": 49.63 }
   ]
 }
 ```

@@ -811,7 +811,7 @@ public class AnalysisLayerTests
     public void CrossTab_WithoutMeasureCountsObjectsPerValue()
     {
         var controller = new AnalysisController(_world);
-        var table = (CrossTabDto)((OkObjectResult)controller.GetCrossTab("HistoricalFigure", "race", null, 50)).Value!;
+        var table = (CrossTabDto)((OkObjectResult)controller.GetCrossTab("HistoricalFigure", "race", null, null, 50)).Value!;
 
         var expected = _world.HistoricalFigures
             .GroupBy(hf => hf.Race.NameSingular)
@@ -828,7 +828,7 @@ public class AnalysisLayerTests
     public void CrossTab_AggregatesANumericMeasureWithinEachGroup()
     {
         var controller = new AnalysisController(_world);
-        var table = (CrossTabDto)((OkObjectResult)controller.GetCrossTab("HistoricalFigure", "race", "ageatdeath", 50)).Value!;
+        var table = (CrossTabDto)((OkObjectResult)controller.GetCrossTab("HistoricalFigure", "race", "ageatdeath", null, 50)).Value!;
 
         var byRace = _world.HistoricalFigures
             .Where(hf => hf.BirthYear != -1 && hf.DeathYear != -1 && hf.DeathYear >= hf.BirthYear)
@@ -851,7 +851,7 @@ public class AnalysisLayerTests
     public void CrossTab_GroupsAreOrderedByTheAggregatedTotal()
     {
         var controller = new AnalysisController(_world);
-        var table = (CrossTabDto)((OkObjectResult)controller.GetCrossTab("HistoricalFigure", "race", "events", 50)).Value!;
+        var table = (CrossTabDto)((OkObjectResult)controller.GetCrossTab("HistoricalFigure", "race", "events", null, 50)).Value!;
 
         var totals = table.Results.Select(r => r.Total ?? 0).ToList();
         CollectionAssert.AreEqual(totals.OrderByDescending(t => t).ToList(), totals, "Groups must be ordered by total, descending");
@@ -862,7 +862,7 @@ public class AnalysisLayerTests
     public void CrossTab_CountsObjectsWithTheFieldNotTheWholeScope()
     {
         var controller = new AnalysisController(_world);
-        var table = (CrossTabDto)((OkObjectResult)controller.GetCrossTab("HistoricalFigure", "goal", null, 50)).Value!;
+        var table = (CrossTabDto)((OkObjectResult)controller.GetCrossTab("HistoricalFigure", "goal", null, null, 50)).Value!;
 
         int carrying = _world.HistoricalFigures.Count(hf => !string.IsNullOrWhiteSpace(hf.Goal));
 
@@ -876,9 +876,9 @@ public class AnalysisLayerTests
     {
         var controller = new AnalysisController(_world);
 
-        Assert.IsInstanceOfType<BadRequestObjectResult>(controller.GetCrossTab("HistoricalFigure", null, null, 50));
-        Assert.IsInstanceOfType<BadRequestObjectResult>(controller.GetCrossTab("HistoricalFigure", "nonexistent", null, 50));
-        Assert.IsInstanceOfType<BadRequestObjectResult>(controller.GetCrossTab("HistoricalFigure", "race", "nonexistent", 50));
+        Assert.IsInstanceOfType<BadRequestObjectResult>(controller.GetCrossTab("HistoricalFigure", null, null, null, 50));
+        Assert.IsInstanceOfType<BadRequestObjectResult>(controller.GetCrossTab("HistoricalFigure", "nonexistent", null, null, 50));
+        Assert.IsInstanceOfType<BadRequestObjectResult>(controller.GetCrossTab("HistoricalFigure", "race", "nonexistent", null, 50));
     }
 
     [TestMethod]
@@ -889,7 +889,7 @@ public class AnalysisLayerTests
 
         foreach (var measure in measures)
         {
-            var result = controller.GetCrossTab("HistoricalFigure", "race", measure.Measure, 50);
+            var result = controller.GetCrossTab("HistoricalFigure", "race", measure.Measure, null, 50);
             Assert.IsInstanceOfType<OkObjectResult>(result, $"/crosstab rejected the measure '{measure.Measure}' that /top offers");
         }
     }
@@ -977,13 +977,57 @@ public class AnalysisLayerTests
     }
 
     [TestMethod]
+    public void CrossTab_RestrictsThePopulationBeforeGrouping()
+    {
+        // Every race names a caste "Male", so a breakdown by caste without a restriction mixes
+        // populations that have nothing to do with each other. This is the guard against that.
+        var race = _world.HistoricalFigures
+            .GroupBy(hf => hf.Race.NameSingular)
+            .Where(group => group.Count() > 1)
+            .OrderByDescending(group => group.Count())
+            .First();
+
+        var controller = new AnalysisController(_world);
+        var table = (CrossTabDto)((OkObjectResult)controller.GetCrossTab("HistoricalFigure", "caste", null, $"race:{race.Key}", 50)).Value!;
+
+        Assert.AreEqual($"race:{race.Key}", table.Where);
+        Assert.AreEqual(race.Count(), table.ObjectsInScope, "Only the restricted population is in scope");
+        Assert.IsTrue(table.ObjectsInScope < _world.HistoricalFigures.Count, "The restriction must actually narrow");
+        Assert.AreEqual(race.Count(hf => !string.IsNullOrWhiteSpace(hf.Caste)), table.ObjectsWithField);
+    }
+
+    [TestMethod]
+    public void CrossTab_RestrictionMatchesTheWholeValueNotASubstring()
+    {
+        var controller = new AnalysisController(_world);
+        var race = _world.HistoricalFigures.First(hf => hf.Race.NameSingular.Length > 2).Race.NameSingular;
+
+        // A substring match would let "race:Elf" also take the dark elves, quietly merging two
+        // populations the caller asked to keep apart.
+        var partial = controller.GetCrossTab("HistoricalFigure", "caste", null, $"race:{race[..2]}", 50);
+
+        Assert.IsInstanceOfType<BadRequestObjectResult>(partial, "A partial value must not match");
+    }
+
+    [TestMethod]
+    public void CrossTab_RejectsARestrictionThatIsNotFieldColonValue()
+    {
+        var controller = new AnalysisController(_world);
+
+        Assert.IsInstanceOfType<BadRequestObjectResult>(controller.GetCrossTab("HistoricalFigure", "caste", null, "race", 50));
+        // Half a restriction would otherwise be dropped and answer a wider question than the one asked.
+        Assert.IsInstanceOfType<BadRequestObjectResult>(controller.GetCrossTab("HistoricalFigure", "caste", null, "race:", 50));
+        Assert.IsInstanceOfType<BadRequestObjectResult>(controller.GetCrossTab("HistoricalFigure", "caste", null, ":Dwarf", 50));
+    }
+
+    [TestMethod]
     public void CrossTab_BreaksWarCasualtiesDownByBelligerentRace()
     {
         // The question that sent the analysis into the HTML DTOs: which races fight which, and at
         // what cost. Both halves live on the war object, but neither was reachable as a property.
         var (world, _, _, _) = BuildWars();
         var controller = new AnalysisController(world);
-        var table = (CrossTabDto)((OkObjectResult)controller.GetCrossTab("War", "attackerrace", "deathcount", 50)).Value!;
+        var table = (CrossTabDto)((OkObjectResult)controller.GetCrossTab("War", "attackerrace", "deathcount", null, 50)).Value!;
 
         Assert.AreEqual(2, table.Groups, "Only the two wars with a recorded attacker race are grouped");
         Assert.AreEqual(3, table.ObjectsInScope);

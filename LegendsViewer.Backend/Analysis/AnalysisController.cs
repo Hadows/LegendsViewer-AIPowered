@@ -275,7 +275,9 @@ public class AnalysisController(IWorld world) : ControllerBase
     /// <c>/facets</c> and <c>/top</c> each read a single property; a question over two at once
     /// ("age at death by caste", "war deaths by attacker race") had no route through the API and
     /// forced the join to be redone outside it. <c>field</c> accepts any facet key, <c>measure</c>
-    /// any name <c>/top</c> accepts.
+    /// any name <c>/top</c> accepts, and <c>where</c> restricts the population first as
+    /// <c>field:value</c> — without which a breakdown by caste mixes every race in the world,
+    /// since "Male" is a caste name each of them uses.
     /// </summary>
     [HttpGet("crosstab")]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -285,6 +287,7 @@ public class AnalysisController(IWorld world) : ControllerBase
         [FromQuery] string? type = null,
         [FromQuery] string? field = null,
         [FromQuery] string? measure = null,
+        [FromQuery] string? where = null,
         [FromQuery] int limit = 50)
     {
         if (!TryScope(type, out var scope, out var failure))
@@ -297,12 +300,22 @@ public class AnalysisController(IWorld world) : ControllerBase
             return BadRequest("Give the facet to group by in 'field'. Call /api/Analysis/facets without 'field' to list the available ones.");
         }
 
+        // A separator at either end leaves half the restriction empty, which would silently apply
+        // no restriction at all and answer a wider question than the one asked.
+        int separator = where?.IndexOf(':') ?? -1;
+        if (!string.IsNullOrWhiteSpace(where) && (separator <= 0 || separator == where.TrimEnd().Length - 1))
+        {
+            return BadRequest($"'where' must read 'field:value', for example 'race:Orc'. Got '{where}'.");
+        }
+
         limit = Math.Clamp(limit, 1, 1000);
-        var table = CrossTabService.Build(scope, type, field.Trim(), measure?.Trim(), limit);
+        var table = CrossTabService.Build(scope, type, field.Trim(), measure?.Trim(), where?.Trim(), limit);
 
         if (table == null)
         {
-            return BadRequest($"No values for field '{field}' in this scope. Call /api/Analysis/facets without 'field' to list the available ones.");
+            return BadRequest(string.IsNullOrWhiteSpace(where)
+                ? $"No values for field '{field}' in this scope. Call /api/Analysis/facets without 'field' to list the available ones."
+                : $"No object matches '{where}' with a value for field '{field}'. Check the restriction with /api/Analysis/facets?field={Uri.EscapeDataString(where.Split(':')[0])}.");
         }
 
         // Naming a measure no object carries is a typo, not an empty result: say so rather than

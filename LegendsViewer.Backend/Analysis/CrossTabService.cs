@@ -20,6 +20,7 @@ public static class CrossTabService
         string? type,
         string field,
         string? measure,
+        string? where,
         int limit)
     {
         var groups = new Dictionary<string, Group>(StringComparer.OrdinalIgnoreCase);
@@ -30,14 +31,26 @@ public static class CrossTabService
         int objectsWithField = 0;
         int objectsWithMeasure = 0;
 
+        var restriction = Restriction.Parse(where);
+
         foreach (var (_, items) in scope)
         {
             foreach (WorldObject item in items)
             {
+                var facets = ObjectFacets.For(item);
+
+                // Castes are named per creature, so "Male" spans every race in the world: without a
+                // way to restrict first, a breakdown by caste silently mixes populations that have
+                // nothing to do with each other.
+                if (!restriction.Admits(facets))
+                {
+                    continue;
+                }
+
                 objectsInScope++;
 
                 var values = new List<string>();
-                foreach (Facet facet in ObjectFacets.For(item))
+                foreach (Facet facet in facets)
                 {
                     if (!facet.Field.Equals(field, StringComparison.OrdinalIgnoreCase))
                     {
@@ -109,12 +122,59 @@ public static class CrossTabService
             fieldLabel,
             aggregating ? measure : null,
             aggregating ? measureLabel : null,
+            restriction.Description,
             objectsInScope,
             objectsWithField,
             aggregating ? objectsWithMeasure : null,
             groups.Count,
             results.Count,
             results);
+    }
+
+    /// <summary>
+    /// An optional <c>field:value</c> restriction applied before grouping. The value is matched
+    /// whole and case insensitively: a substring match would make <c>race:Elf</c> also take the
+    /// dark elves, which is precisely the confusion the restriction exists to prevent.
+    /// </summary>
+    private readonly struct Restriction(string? field, string? value)
+    {
+        private readonly string? _field = field;
+        private readonly string? _value = value;
+
+        public string? Description => _field == null ? null : $"{_field}:{_value}";
+
+        public static Restriction Parse(string? where)
+        {
+            if (string.IsNullOrWhiteSpace(where))
+            {
+                return new Restriction(null, null);
+            }
+
+            // Split on the first colon only: facet values carry their own punctuation.
+            int separator = where.IndexOf(':');
+            return separator <= 0 || separator == where.Length - 1
+                ? new Restriction(null, null)
+                : new Restriction(where[..separator].Trim(), where[(separator + 1)..].Trim());
+        }
+
+        public bool Admits(List<Facet> facets)
+        {
+            if (_field == null)
+            {
+                return true;
+            }
+
+            foreach (Facet facet in facets)
+            {
+                if (facet.Field.Equals(_field, StringComparison.OrdinalIgnoreCase)
+                    && facet.Value.Equals(_value, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
     }
 
     private sealed class Group(string value)
@@ -164,6 +224,7 @@ public sealed record CrossTabDto(
     string FieldLabel,
     string? Measure,
     string? MeasureLabel,
+    string? Where,
     int ObjectsInScope,
     int ObjectsWithField,
     int? ObjectsWithMeasure,
