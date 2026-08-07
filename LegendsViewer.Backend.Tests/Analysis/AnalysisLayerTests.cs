@@ -1018,6 +1018,42 @@ public class AnalysisLayerTests
         // Half a restriction would otherwise be dropped and answer a wider question than the one asked.
         Assert.IsInstanceOfType<BadRequestObjectResult>(controller.GetCrossTab("HistoricalFigure", "caste", null, "race:", 50));
         Assert.IsInstanceOfType<BadRequestObjectResult>(controller.GetCrossTab("HistoricalFigure", "caste", null, ":Dwarf", 50));
+        // One malformed clause must fail the whole call, not just itself.
+        Assert.IsInstanceOfType<BadRequestObjectResult>(controller.GetCrossTab("HistoricalFigure", "caste", null, "race:Dwarf,deathcause", 50));
+    }
+
+    [TestMethod]
+    public void CrossTab_CombinesSeveralRestrictionsWithAnd()
+    {
+        // Verifying a lifespan needs both halves at once: the figures of one race *and* the ones
+        // who died of old age. With a single clause the median measures how violent the world is.
+        var candidate = _world.HistoricalFigures
+            .Where(hf => !string.IsNullOrWhiteSpace(hf.Caste) && hf.DeathYear != -1)
+            .GroupBy(hf => (Race: hf.Race.NameSingular, Cause: hf.DeathCause.ToString()))
+            .OrderByDescending(group => group.Count())
+            .FirstOrDefault();
+
+        if (candidate == null)
+        {
+            Assert.Inconclusive("Test world has no dead figure carrying both a race and a caste");
+            return;
+        }
+
+        var controller = new AnalysisController(_world);
+        string where = $"race:{candidate.Key.Race},deathcause:{candidate.Key.Cause}";
+        var table = (CrossTabDto)((OkObjectResult)controller.GetCrossTab("HistoricalFigure", "caste", null, where, 50)).Value!;
+
+        int expected = _world.HistoricalFigures.Count(hf =>
+            hf.Race.NameSingular == candidate.Key.Race
+            && hf.DeathYear != -1
+            && hf.DeathCause.ToString() == candidate.Key.Cause);
+
+        Assert.AreEqual(where, table.Where);
+        Assert.AreEqual(expected, table.ObjectsInScope, "Both clauses must narrow the population");
+
+        // Each clause alone admits strictly more than the two together.
+        var raceOnly = (CrossTabDto)((OkObjectResult)controller.GetCrossTab("HistoricalFigure", "caste", null, $"race:{candidate.Key.Race}", 50)).Value!;
+        Assert.IsTrue(raceOnly.ObjectsInScope > table.ObjectsInScope, "Adding the second clause must narrow further");
     }
 
     [TestMethod]

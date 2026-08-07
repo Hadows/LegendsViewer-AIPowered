@@ -132,48 +132,61 @@ public static class CrossTabService
     }
 
     /// <summary>
-    /// An optional <c>field:value</c> restriction applied before grouping. The value is matched
-    /// whole and case insensitively: a substring match would make <c>race:Elf</c> also take the
-    /// dark elves, which is precisely the confusion the restriction exists to prevent.
+    /// Optional <c>field:value</c> clauses, comma separated and combined with AND, applied before
+    /// grouping. Values are matched whole and case insensitively: a substring match would make
+    /// <c>race:Elf</c> also take the dark elves, which is the confusion this exists to prevent.
+    ///
+    /// More than one clause is not a luxury. Verifying a lifespan means looking at the figures who
+    /// died of old age *and* belong to one race: with a single clause the median silently measures
+    /// how violent the world is instead.
     /// </summary>
-    private readonly struct Restriction(string? field, string? value)
+    private readonly struct Restriction(List<(string Field, string Value)> clauses)
     {
-        private readonly string? _field = field;
-        private readonly string? _value = value;
+        private readonly List<(string Field, string Value)> _clauses = clauses;
 
-        public string? Description => _field == null ? null : $"{_field}:{_value}";
+        public string? Description => _clauses.Count == 0
+            ? null
+            : string.Join(",", _clauses.Select(clause => $"{clause.Field}:{clause.Value}"));
 
         public static Restriction Parse(string? where)
         {
-            if (string.IsNullOrWhiteSpace(where))
+            var clauses = new List<(string, string)>();
+
+            foreach (string part in (where ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
-                return new Restriction(null, null);
+                // Split on the first colon only: facet values carry their own punctuation.
+                int separator = part.IndexOf(':');
+                if (separator > 0 && separator < part.Length - 1)
+                {
+                    clauses.Add((part[..separator].Trim(), part[(separator + 1)..].Trim()));
+                }
             }
 
-            // Split on the first colon only: facet values carry their own punctuation.
-            int separator = where.IndexOf(':');
-            return separator <= 0 || separator == where.Length - 1
-                ? new Restriction(null, null)
-                : new Restriction(where[..separator].Trim(), where[(separator + 1)..].Trim());
+            return new Restriction(clauses);
         }
 
         public bool Admits(List<Facet> facets)
         {
-            if (_field == null)
+            foreach (var (field, value) in _clauses)
             {
-                return true;
-            }
-
-            foreach (Facet facet in facets)
-            {
-                if (facet.Field.Equals(_field, StringComparison.OrdinalIgnoreCase)
-                    && facet.Value.Equals(_value, StringComparison.OrdinalIgnoreCase))
+                bool matched = false;
+                foreach (Facet facet in facets)
                 {
-                    return true;
+                    if (facet.Field.Equals(field, StringComparison.OrdinalIgnoreCase)
+                        && facet.Value.Equals(value, StringComparison.OrdinalIgnoreCase))
+                    {
+                        matched = true;
+                        break;
+                    }
+                }
+
+                if (!matched)
+                {
+                    return false;
                 }
             }
 
-            return false;
+            return true;
         }
     }
 

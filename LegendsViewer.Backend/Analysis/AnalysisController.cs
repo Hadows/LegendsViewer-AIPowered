@@ -300,12 +300,15 @@ public class AnalysisController(IWorld world) : ControllerBase
             return BadRequest("Give the facet to group by in 'field'. Call /api/Analysis/facets without 'field' to list the available ones.");
         }
 
-        // A separator at either end leaves half the restriction empty, which would silently apply
-        // no restriction at all and answer a wider question than the one asked.
-        int separator = where?.IndexOf(':') ?? -1;
-        if (!string.IsNullOrWhiteSpace(where) && (separator <= 0 || separator == where.TrimEnd().Length - 1))
+        // A clause missing either half would be dropped, silently answering a wider question than
+        // the one asked, so a malformed one fails the whole call instead.
+        foreach (string clause in (where ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            return BadRequest($"'where' must read 'field:value', for example 'race:Orc'. Got '{where}'.");
+            int separator = clause.IndexOf(':');
+            if (separator <= 0 || separator == clause.Length - 1)
+            {
+                return BadRequest($"Each 'where' clause must read 'field:value', for example 'race:Orc,deathcause:OldAge'. Got '{clause}'.");
+            }
         }
 
         limit = Math.Clamp(limit, 1, 1000);

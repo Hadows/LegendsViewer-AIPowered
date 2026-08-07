@@ -282,7 +282,7 @@ to avoid.
 | `type` | all types | restrict to one type |
 | `field` | — | **required**, the facet to group by; any key `/facets` lists |
 | `measure` | none | numeric measure to aggregate; any name `/top` accepts |
-| `where` | none | `field:value`, restricting the population before grouping |
+| `where` | none | one or more `field:value` clauses, comma separated, combined with AND |
 | `limit` | 50 | maximum 1000 groups |
 
 Without `measure` the groups carry object counts only. With it, each group also reports `total`,
@@ -294,10 +294,15 @@ group and the result reads like a fact about one population when it describes fo
 matched whole and case insensitively — a substring match would let `race:Elf` also take the dark
 elves, which is the confusion the restriction exists to prevent. A `where` missing either half
 answers **400** rather than being dropped, since a silently ignored restriction answers a wider
-question than the one asked.
+question than the one asked — and one malformed clause fails the whole call, not just itself.
+
+Several clauses matter more than they look. Verifying a lifespan means looking at the figures who
+died of old age **and** belong to one race: with a single clause the median silently measures how
+violent the world is instead. In this world dwarves cap at 150-170 years yet their median age at
+death is 34, because almost nobody reaches the cap.
 
 ```bash
-curl -s "http://localhost:15421/api/Analysis/crosstab?type=HistoricalFigure&field=caste&measure=ageatdeath&where=race:Orc"
+curl -s "http://localhost:15421/api/Analysis/crosstab?type=HistoricalFigure&field=caste&measure=ageatdeath&where=race:Orc,deathcause:OldAge"
 curl -s "http://localhost:15421/api/Analysis/crosstab?type=War&field=attackerrace&measure=deathcount"
 ```
 
@@ -305,7 +310,7 @@ curl -s "http://localhost:15421/api/Analysis/crosstab?type=War&field=attackerrac
 {
   "field": "caste", "fieldLabel": "Caste",
   "measure": "ageatdeath", "measureLabel": "Age at death",
-  "where": "race:Orc",
+  "where": "race:Orc,deathcause:OldAge",
   "objectsInScope": 51696, "objectsWithField": 51691, "objectsWithMeasure": 37056,
   "groups": 3,
   "results": [
