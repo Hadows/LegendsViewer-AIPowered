@@ -56,10 +56,11 @@ LegendsViewer.Backend/Analysis/
   EventSearchService.cs     full text search over rendered event prose
   FacetStatistics.cs        base rates for property values
   RankingService.cs         rankings by numeric measure
+  CrossTabService.cs        one property grouped by another, with aggregates
   PlainText.cs              markup stripping safety net
 
 LegendsViewer.Backend.Tests/Analysis/
-  AnalysisLayerTests.cs     40 tests, parsing the existing test world once
+  AnalysisLayerTests.cs     64 tests, parsing the existing test world once
 ```
 
 ## Conventions
@@ -125,7 +126,23 @@ leaders.
 ### `-1` means "not recorded"
 
 Render it as `?`, and do not filter out negative years in general: deities and megabeasts have
-legitimate negative birth years.
+legitimate negative birth years. `ageatdeath` is the worked example: it excludes the two `-1`
+sentinels and a death recorded before the birth, and accepts everything else, so the oldest figures
+in the world stay in the distribution instead of disappearing from it.
+
+### A question over two properties is an endpoint, not a client-side join
+
+`/facets` and `/top` each read one property, and for a while anything phrased over two — *age at
+death by caste*, *casualties by attacker race* — had to be reassembled by the caller from the object
+lists. With the classic DTOs that means recovering ids from HTML anchors, which is the exact failure
+this layer was built to remove: the join looks like analysis but is really scraping, and it silently
+inherits every quirk of the presentation layer.
+
+`/crosstab` closes that gap generically rather than by adding a route per question. It groups by any
+facet key and aggregates any measure `/top` accepts, so a property added to `ObjectFacets` becomes
+groupable and, if numeric, aggregatable, without this route changing. When a property needed for
+such a question exists only inside an HTML field of a classic DTO — as the belligerents' races did —
+the fix is to surface it as a facet, never to parse the markup.
 
 ## Measured effect
 

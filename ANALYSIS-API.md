@@ -269,6 +269,52 @@ denominator that mixes deities with rivers cannot be read against.
 The distribution travels with the leaders on purpose: a first place is not interpretable without the
 spread. Here the top deity holds three times the median — a genuine lead, not a monopoly.
 
+### `GET /crosstab` — one property broken down by another
+
+`/facets` and `/top` each read a single property. A question phrased over two at once — *age at
+death by caste*, *war casualties by attacker race*, *sites per civilization* — has no answer in
+either, and the only remaining route is to pull the objects and redo the join outside the API. For
+the classic DTOs that means parsing ids out of HTML anchors, which is exactly what this layer exists
+to avoid.
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `type` | all types | restrict to one type |
+| `field` | — | **required**, the facet to group by; any key `/facets` lists |
+| `measure` | none | numeric measure to aggregate; any name `/top` accepts |
+| `limit` | 50 | maximum 1000 groups |
+
+Without `measure` the groups carry object counts only. With it, each group also reports `total`,
+`min`, `max`, `median` and `mean`, and the groups are ordered by `total` instead of by size.
+
+```bash
+curl -s "http://localhost:15421/api/Analysis/crosstab?type=HistoricalFigure&field=caste&measure=ageatdeath"
+curl -s "http://localhost:15421/api/Analysis/crosstab?type=War&field=attackerrace&measure=deathcount"
+```
+
+```json
+{
+  "field": "caste", "fieldLabel": "Caste",
+  "measure": "ageatdeath", "measureLabel": "Age at death",
+  "objectsInScope": 41080, "objectsWithField": 41080, "objectsWithMeasure": 28114,
+  "groups": 3,
+  "results": [
+    { "rank": 1, "value": "GOBLIN", "objects": 22417, "objectsWithMeasure": 15003,
+      "total": 570114, "min": 0, "max": 50, "median": 38, "mean": 38.0 }
+  ]
+}
+```
+
+Two denominators, for the same reason `/facets` has them: `objectsWithField` is how many objects
+carry the grouping property at all, `objectsWithMeasure` how many of those also carry the measure.
+They differ whenever a measure is recorded for only part of a group — an age at death exists only
+for the dead — and dividing by the wrong one understates every group.
+
+A multi-valued facet puts its object in every one of its groups, so the group counts can add up to
+more than `objectsWithField`. Naming a `measure` that no object in scope carries answers **400**
+rather than silently returning plain counts, which would look like an answer to a different
+question.
+
 ---
 
 ## A worked sequence
@@ -286,10 +332,15 @@ curl -s "http://localhost:15421/api/Analysis/digest/HistoricalFigure/24707"
 # 4. is the trait that stands out actually rare
 curl -s "http://localhost:15421/api/Analysis/facets?type=HistoricalFigure&field=goal&limit=10"
 curl -s "http://localhost:15421/api/Analysis/top?type=HistoricalFigure&by=worshippers&limit=10"
+
+# 5. does it hold once split by the property that might explain it
+curl -s "http://localhost:15421/api/Analysis/crosstab?type=HistoricalFigure&field=race&measure=ageatdeath"
 ```
 
 Step 4 is the one worth insisting on. Steps 2 and 3 surface something striking; only the base rate
-and the ranking tell you whether it is striking or merely common.
+and the ranking tell you whether it is striking or merely common. Step 5 is what separates a real
+pattern from a mixture: a world-wide median hides that two populations behind it may have nothing
+in common.
 
 ## Status codes
 
