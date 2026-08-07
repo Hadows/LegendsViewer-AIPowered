@@ -134,6 +134,16 @@ public static class RankingService
         return measures;
     }
 
+    /// <summary>
+    /// The same measure resolution the ranking uses, for <see cref="CrossTabService"/>: one
+    /// definition of what counts as a numeric measure, so both routes accept exactly the same names.
+    /// </summary>
+    internal static bool TryMeasureValue(WorldObject worldObject, string by, out string label, out double value)
+    {
+        label = by;
+        return TryMeasure(worldObject, by, ref label, out value);
+    }
+
     private static bool TryMeasure(WorldObject worldObject, string by, ref string label, out double value)
     {
         if (by.Equals(EventsMeasure, StringComparison.OrdinalIgnoreCase))

@@ -1,8 +1,10 @@
 using System.Text;
 using LegendsViewer.Backend.Analysis;
 using LegendsViewer.Backend.Legends;
+using LegendsViewer.Backend.Legends.EventCollections;
 using LegendsViewer.Backend.Legends.Parser;
 using LegendsViewer.Backend.Legends.Various;
+using LegendsViewer.Backend.Legends.WorldObjects;
 using Microsoft.AspNetCore.Mvc;
 
 namespace LegendsViewer.Backend.Tests.Analysis;
@@ -767,5 +769,229 @@ public class AnalysisLayerTests
 
         StringAssert.Contains(summary, "?");
         Assert.IsFalse(summary.Contains("--1"), "Unrecorded years must not render as '-1'");
+    }
+
+    [TestMethod]
+    public void AgeAtDeath_IsRecordedOnlyWhenBothYearsAreKnown()
+    {
+        foreach (var hf in _world.HistoricalFigures)
+        {
+            var facet = ObjectFacets.For(hf).FirstOrDefault(f => f.Field == "ageatdeath");
+            bool computable = hf.BirthYear != -1 && hf.DeathYear != -1 && hf.DeathYear >= hf.BirthYear;
+
+            if (!computable)
+            {
+                Assert.IsNull(facet.Field, $"{hf.Name} has no usable years but reports an age");
+                continue;
+            }
+
+            Assert.AreEqual((hf.DeathYear - hf.BirthYear).ToString(), facet.Value, hf.Name);
+        }
+    }
+
+    [TestMethod]
+    public void AgeAtDeath_AcceptsNegativeBirthYears()
+    {
+        // Deities and megabeasts are born before year 0; only -1 means "unrecorded", so filtering
+        // every negative year would silently drop exactly the oldest figures in the world.
+        var ancient = _world.HistoricalFigures
+            .FirstOrDefault(hf => hf.BirthYear < -1 && hf.DeathYear >= hf.BirthYear && hf.DeathYear != -1);
+
+        if (ancient == null)
+        {
+            Assert.Inconclusive("Test world has no figure born before year 0 that later died");
+            return;
+        }
+
+        var facet = ObjectFacets.For(ancient).FirstOrDefault(f => f.Field == "ageatdeath");
+        Assert.AreEqual((ancient.DeathYear - ancient.BirthYear).ToString(), facet.Value);
+    }
+
+    [TestMethod]
+    public void CrossTab_WithoutMeasureCountsObjectsPerValue()
+    {
+        var controller = new AnalysisController(_world);
+        var table = (CrossTabDto)((OkObjectResult)controller.GetCrossTab("HistoricalFigure", "race", null, 50)).Value!;
+
+        var expected = _world.HistoricalFigures
+            .GroupBy(hf => hf.Race.NameSingular)
+            .OrderByDescending(group => group.Count())
+            .First();
+
+        Assert.AreEqual(expected.Key, table.Results[0].Value);
+        Assert.AreEqual(expected.Count(), table.Results[0].Objects);
+        Assert.IsNull(table.Measure, "Without a measure the table reports plain counts");
+        Assert.AreEqual(_world.HistoricalFigures.Count, table.ObjectsInScope);
+    }
+
+    [TestMethod]
+    public void CrossTab_AggregatesANumericMeasureWithinEachGroup()
+    {
+        var controller = new AnalysisController(_world);
+        var table = (CrossTabDto)((OkObjectResult)controller.GetCrossTab("HistoricalFigure", "race", "ageatdeath", 50)).Value!;
+
+        var byRace = _world.HistoricalFigures
+            .Where(hf => hf.BirthYear != -1 && hf.DeathYear != -1 && hf.DeathYear >= hf.BirthYear)
+            .GroupBy(hf => hf.Race.NameSingular)
+            .ToDictionary(group => group.Key, group => group.Select(hf => (double)(hf.DeathYear - hf.BirthYear)).ToList());
+
+        Assert.IsTrue(table.Results.Count > 0, "The test world must have at least one race with recorded ages");
+
+        foreach (var group in table.Results.Where(r => r.ObjectsWithMeasure > 0))
+        {
+            var ages = byRace[group.Value].OrderBy(age => age).ToList();
+            Assert.AreEqual(ages.Count, group.ObjectsWithMeasure, group.Value);
+            Assert.AreEqual(ages.Sum(), group.Total, group.Value);
+            Assert.AreEqual(ages[0], group.Min, group.Value);
+            Assert.AreEqual(ages[^1], group.Max, group.Value);
+        }
+    }
+
+    [TestMethod]
+    public void CrossTab_GroupsAreOrderedByTheAggregatedTotal()
+    {
+        var controller = new AnalysisController(_world);
+        var table = (CrossTabDto)((OkObjectResult)controller.GetCrossTab("HistoricalFigure", "race", "events", 50)).Value!;
+
+        var totals = table.Results.Select(r => r.Total ?? 0).ToList();
+        CollectionAssert.AreEqual(totals.OrderByDescending(t => t).ToList(), totals, "Groups must be ordered by total, descending");
+        Assert.AreEqual(1, table.Results[0].Rank);
+    }
+
+    [TestMethod]
+    public void CrossTab_CountsObjectsWithTheFieldNotTheWholeScope()
+    {
+        var controller = new AnalysisController(_world);
+        var table = (CrossTabDto)((OkObjectResult)controller.GetCrossTab("HistoricalFigure", "goal", null, 50)).Value!;
+
+        int carrying = _world.HistoricalFigures.Count(hf => !string.IsNullOrWhiteSpace(hf.Goal));
+
+        Assert.AreEqual(carrying, table.ObjectsWithField, "The denominator is the figures that carry a goal");
+        Assert.AreEqual(_world.HistoricalFigures.Count, table.ObjectsInScope);
+        Assert.IsTrue(table.ObjectsWithField < table.ObjectsInScope, "Not every figure records a goal");
+    }
+
+    [TestMethod]
+    public void CrossTab_RejectsAMissingFieldAndAnUnknownMeasure()
+    {
+        var controller = new AnalysisController(_world);
+
+        Assert.IsInstanceOfType<BadRequestObjectResult>(controller.GetCrossTab("HistoricalFigure", null, null, 50));
+        Assert.IsInstanceOfType<BadRequestObjectResult>(controller.GetCrossTab("HistoricalFigure", "nonexistent", null, 50));
+        Assert.IsInstanceOfType<BadRequestObjectResult>(controller.GetCrossTab("HistoricalFigure", "race", "nonexistent", 50));
+    }
+
+    [TestMethod]
+    public void CrossTab_AcceptsEveryMeasureThatTopAccepts()
+    {
+        var controller = new AnalysisController(_world);
+        var measures = (List<MeasureDto>)((OkObjectResult)controller.GetTop("HistoricalFigure", null, null, 20)).Value!;
+
+        foreach (var measure in measures)
+        {
+            var result = controller.GetCrossTab("HistoricalFigure", "race", measure.Measure, 50);
+            Assert.IsInstanceOfType<OkObjectResult>(result, $"/crosstab rejected the measure '{measure.Measure}' that /top offers");
+        }
+    }
+
+    /// <summary>
+    /// The bundled test world contains no war at all, so the war facets have to be exercised
+    /// against objects built by hand. Everything is attached to a throwaway <see cref="World"/>
+    /// to keep the shared parsed one untouched.
+    /// </summary>
+    private static (World World, War Orcish, War Dwarven, War Raceless) BuildWars()
+    {
+        var world = new World();
+
+        Entity Side(string race, string name)
+        {
+            var entity = new Entity([], world) { Name = name };
+            if (race.Length > 0)
+            {
+                entity.Race = new CreatureInfo(race);
+            }
+            return entity;
+        }
+
+        var orcish = new War([], world)
+        {
+            Name = "The War of Tusks",
+            Attacker = Side("ORC", "The Bloodied Fist"),
+            Defender = Side("DWARF", "The Iron Halls"),
+            DeathCount = 700,
+            AttackerDeathCount = 250,
+            DefenderDeathCount = 450
+        };
+
+        var dwarven = new War([], world)
+        {
+            Name = "The Second Delving",
+            Attacker = Side("DWARF", "The Iron Halls"),
+            Defender = Side("ELF", "The Quiet Glade"),
+            DeathCount = 100,
+            AttackerDeathCount = 40,
+            DefenderDeathCount = 60
+        };
+
+        // No race recorded on either side and no casualties: both new facets must stay absent
+        // rather than surface a placeholder or a zero.
+        var raceless = new War([], world) { Name = "The Forgotten Quarrel" };
+
+        world.EventCollections.AddRange([orcish, dwarven, raceless]);
+        // The controller answers 409 until a world holds figures or events; one figure is enough to
+        // make this throwaway one count as loaded, and it never enters the War scope.
+        world.HistoricalFigures.Add(new HistoricalFigure { Name = "Witness" });
+        return (world, orcish, dwarven, raceless);
+    }
+
+    [TestMethod]
+    public void WarFacets_ExposeTheBelligerentRaces()
+    {
+        var (_, orcish, _, raceless) = BuildWars();
+
+        var facets = ObjectFacets.For(orcish);
+        Assert.AreEqual("Orc", facets.FirstOrDefault(f => f.Field == "attackerrace").Value);
+        Assert.AreEqual("Dwarf", facets.FirstOrDefault(f => f.Field == "defenderrace").Value);
+
+        var none = ObjectFacets.For(raceless);
+        Assert.IsNull(none.FirstOrDefault(f => f.Field == "attackerrace").Field, "An unrecorded race must not be reported");
+        Assert.IsNull(none.FirstOrDefault(f => f.Field == "defenderrace").Field, "An unrecorded race must not be reported");
+    }
+
+    [TestMethod]
+    public void WarFacets_ExposeANumericDeathCountBesideTheReadableOne()
+    {
+        var (_, orcish, _, raceless) = BuildWars();
+
+        var facets = ObjectFacets.For(orcish);
+
+        // "deaths" reads well but carries both sides in prose, so it parses as nothing: the bare
+        // number is what makes the count a /top measure and a /crosstab aggregate.
+        StringAssert.Contains(facets.First(f => f.Field == "deaths").Value, "attacker");
+        Assert.AreEqual("700", facets.FirstOrDefault(f => f.Field == "deathcount").Value);
+        Assert.AreEqual("250", facets.FirstOrDefault(f => f.Field == "attackerdeaths").Value);
+        Assert.AreEqual("450", facets.FirstOrDefault(f => f.Field == "defenderdeaths").Value);
+
+        Assert.IsNull(ObjectFacets.For(raceless).FirstOrDefault(f => f.Field == "deathcount").Field,
+            "A war without casualties must not report a count of zero");
+    }
+
+    [TestMethod]
+    public void CrossTab_BreaksWarCasualtiesDownByBelligerentRace()
+    {
+        // The question that sent the analysis into the HTML DTOs: which races fight which, and at
+        // what cost. Both halves live on the war object, but neither was reachable as a property.
+        var (world, _, _, _) = BuildWars();
+        var controller = new AnalysisController(world);
+        var table = (CrossTabDto)((OkObjectResult)controller.GetCrossTab("War", "attackerrace", "deathcount", 50)).Value!;
+
+        Assert.AreEqual(2, table.Groups, "Only the two wars with a recorded attacker race are grouped");
+        Assert.AreEqual(3, table.ObjectsInScope);
+        Assert.AreEqual(2, table.ObjectsWithField);
+
+        Assert.AreEqual("Orc", table.Results[0].Value, "Groups are ordered by total casualties");
+        Assert.AreEqual(700, table.Results[0].Total);
+        Assert.AreEqual("Dwarf", table.Results[1].Value);
+        Assert.AreEqual(100, table.Results[1].Total);
     }
 }

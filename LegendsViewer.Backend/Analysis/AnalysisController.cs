@@ -267,6 +267,54 @@ public class AnalysisController(IWorld world) : ControllerBase
             : Ok(ranking);
     }
 
+    /// <summary>
+    /// Breaks one property down by another: groups objects by the categorical facet <c>field</c>
+    /// and, when <c>measure</c> names a numeric one, reports total, min, max, median and mean of it
+    /// within each group.
+    ///
+    /// <c>/facets</c> and <c>/top</c> each read a single property; a question over two at once
+    /// ("age at death by caste", "war deaths by attacker race") had no route through the API and
+    /// forced the join to be redone outside it. <c>field</c> accepts any facet key, <c>measure</c>
+    /// any name <c>/top</c> accepts.
+    /// </summary>
+    [HttpGet("crosstab")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public ActionResult GetCrossTab(
+        [FromQuery] string? type = null,
+        [FromQuery] string? field = null,
+        [FromQuery] string? measure = null,
+        [FromQuery] int limit = 50)
+    {
+        if (!TryScope(type, out var scope, out var failure))
+        {
+            return failure;
+        }
+
+        if (string.IsNullOrWhiteSpace(field))
+        {
+            return BadRequest("Give the facet to group by in 'field'. Call /api/Analysis/facets without 'field' to list the available ones.");
+        }
+
+        limit = Math.Clamp(limit, 1, 1000);
+        var table = CrossTabService.Build(scope, type, field.Trim(), measure?.Trim(), limit);
+
+        if (table == null)
+        {
+            return BadRequest($"No values for field '{field}' in this scope. Call /api/Analysis/facets without 'field' to list the available ones.");
+        }
+
+        // Naming a measure no object carries is a typo, not an empty result: say so rather than
+        // returning a table of plain counts that silently answers a different question.
+        if (!string.IsNullOrWhiteSpace(measure) && table.ObjectsWithMeasure == 0)
+        {
+            return BadRequest($"No numeric measure '{measure}' in this scope. Call /api/Analysis/top without 'by' to list the available ones.");
+        }
+
+        return Ok(table);
+    }
+
     /// <summary>Full text search over the rendered prose of every event in the world.</summary>
     [HttpGet("events/search")]
     [Produces("text/plain")]

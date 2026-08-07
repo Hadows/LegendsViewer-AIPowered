@@ -33,6 +33,13 @@ public static class ObjectFacets
                 Add(facets, "born", "Born", hf.BirthYear != -1 ? hf.BirthYear.ToString() : null);
                 Add(facets, "died", "Died", hf.DeathYear != -1 ? hf.DeathYear.ToString() : "still alive or unrecorded");
                 Add(facets, "deathcause", "Cause of death", hf.DeathYear != -1 ? hf.DeathCause.ToString() : null);
+                // Being numeric this is also a /top measure and a /crosstab aggregate, which is what
+                // makes "age at death by race" or "by caste" a single query. Deities and megabeasts
+                // carry legitimately negative birth years, so only the unrecorded -1 is excluded;
+                // a death before the recorded birth would be a parsing artefact and is dropped.
+                Add(facets, "ageatdeath", "Age at death", hf.BirthYear != -1 && hf.DeathYear != -1 && hf.DeathYear >= hf.BirthYear
+                    ? (hf.DeathYear - hf.BirthYear).ToString()
+                    : null);
                 Add(facets, "goal", "Goal", hf.Goal);
                 foreach (string sphere in hf.Spheres)
                 {
@@ -142,9 +149,19 @@ public static class ObjectFacets
                 {
                     Add(facets, "attacker", "Attacker", war.Attacker?.Name);
                     Add(facets, "defender", "Defender", war.Defender?.Name);
+                    // The belligerents are recorded by name only, so "which races fight each other"
+                    // had no route through the properties at all: the classic DTO carries the side
+                    // as an HTML anchor, and the race had to be recovered from the id inside it.
+                    Add(facets, "attackerrace", "Attacker race", RaceOf(war.Attacker));
+                    Add(facets, "defenderrace", "Defender race", RaceOf(war.Defender));
                     Add(facets, "deaths", "Deaths", war.DeathCount > 0
                         ? $"{war.DeathCount} ({war.AttackerDeathCount} attacker / {war.DefenderDeathCount} defender)"
                         : null);
+                    // "deaths" reads well but does not parse as a number, so it can be neither a
+                    // /top measure nor a /crosstab aggregate. These three can.
+                    Add(facets, "deathcount", "Death count", war.DeathCount > 0 ? war.DeathCount.ToString() : null);
+                    Add(facets, "attackerdeaths", "Attacker deaths", war.AttackerDeathCount > 0 ? war.AttackerDeathCount.ToString() : null);
+                    Add(facets, "defenderdeaths", "Defender deaths", war.DefenderDeathCount > 0 ? war.DefenderDeathCount.ToString() : null);
                 }
                 break;
         }
@@ -166,6 +183,14 @@ public static class ObjectFacets
         {
             values.Add(value);
         }
+    }
+
+    /// <summary>The race of a belligerent, skipping the placeholder the parser leaves when a
+    /// civilization has none recorded.</summary>
+    private static string? RaceOf(Entity? entity)
+    {
+        var race = entity?.Race;
+        return race != null && race != CreatureInfo.Unknown ? race.NameSingular : null;
     }
 
     /// <summary>The post as the prose spells it, falling back to the generic name when the entity
